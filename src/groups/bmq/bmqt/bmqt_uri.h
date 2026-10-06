@@ -53,7 +53,7 @@
 ///     characters and dashes.  The ".~" sequence is not part of the tier.
 ///
 ///   - The URI path is the name of the queue ("my.queue" above) and may
-///     contain alphanumeric characters, dashes, underscores and tild (it has
+///     contain alphanumeric characters, dashes, underscores and tilde (it has
 ///     to match the following regular expression: `[-a-zA-Z0-9_~\\.]+`).  The
 ///     queue name must be less than @bbref{bmqt::Uri::k_QUEUENAME_MAX_LENGTH}
 ///     characters long.
@@ -68,6 +68,18 @@
 ///         by BlazingMQ broker to uniquely identify the client.
 ///
 ///   - The URI fragment part is currently unused.
+///
+/// Anatomy of a fully qualified URI:
+///
+/// ```
+/// bmq://ts.trades.myapp.~bt/my.queue?id=foo
+/// [bmq]                                       scheme
+///       [ts.trades.myapp.~bt]                 authority
+///       [ts.trades.myapp]                     domain
+///                         [bt]                tier
+///                            [my.queue]       path (queue name)
+///                                      [foo]  query id
+/// ```
 ///
 /// Usage Example 1                                             {#bmqt_uri_ex1}
 /// ===============
