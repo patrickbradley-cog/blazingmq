@@ -22,7 +22,7 @@ names the file or class it comes from, so you can check it there.
 
 **Q1. A queue is named by a URI.** The format is `bmq://<domain>[.~tier]/<queue>[?id=<appId>]`.
 The scheme is always `bmq`. Domain names use `[-a-zA-Z0-9._]` and cannot contain two dots in a row.
-Queue names use `[-a-zA-Z0-9_~.]` and must be shorter than 64 characters.
+Queue names use `[-a-zA-Z0-9_~.]` and can be at most 64 characters long.
 *Source: `bmq/bmqt/bmqt_uri.h` (`bmqt::Uri`, `k_QUEUENAME_MAX_LENGTH = 64`).*
 
 **Q2. An open must ask to read, write, or both.** Opening with neither READ nor WRITE is invalid.
@@ -59,7 +59,8 @@ primary and the fewest queues. If no partition has a primary, it picks the one w
 
 **Q9. Only empty, unused queues are garbage collected.** A queue is deleted only on its primary,
 only when it has no handles and no outstanding messages, and only after it has stayed that way for
-`keepaliveDurationMs` (default 30 minutes).
+`keepaliveDurationMs` (default 30 minutes). Exception: a forced (immediate) collection removes
+queues that were recovered at startup but never opened, without waiting and without checking for messages.
 *Source: `mqb/mqbblp/mqbblp_clusterqueuehelper.cpp` (`ClusterQueueHelper::gcExpiredQueues`).*
 
 **Q10. Idle queues can raise an alarm.** If `maxIdleTime` is set, an app that has messages
@@ -203,13 +204,15 @@ which is drained before any new messages. A new primary redelivers everything th
 *Source: `mqb/mqbblp/mqbblp_queueengineutil.h` (`QueueEngineUtil_AppState`, redelivery list);
 `mqbblp_rootqueueengine.cpp` ("Primary redelivers everything").*
 
-**A8. A consumer crash counts as a delivery attempt.** For each unconfirmed message of a crashed client, the
-broker *rejects* it, which lowers its remaining-attempts counter by one.
+**A8. A consumer crash counts as a delivery attempt when attempts are limited.** For each unconfirmed message
+of a crashed client, the broker *rejects* it. If `maxDeliveryAttempts` is set, this lowers the remaining-attempts
+counter by one. With the default (unlimited), the counter does not change.
 *Source: `mqb/mqbblp/mqbblp_queuehandle.cpp` (`QueueHandle::clearClient`); `RootQueueEngine::onRejectMessage`.*
 
 **A9. Poison messages are purged after `maxDeliveryAttempts`.** When the counter hits zero, the message is
-auto-confirmed for that app, dumped to a temp file and an alarm is raised. `0` (default) means unlimited.
-*Source: `mqbconf.xsd` (`maxDeliveryAttempts`); `RootQueueEngine::onRejectMessage`;
+auto-confirmed for that app. The message is dumped to a temp file and an alarm is raised, but at most once every
+15 seconds; other poison messages in that window are purged without their own dump or alarm. `0` (default) means unlimited.
+*Source: `mqbconf.xsd` (`maxDeliveryAttempts`); `RootQueueEngine::onRejectMessage` (`d_throttledRejectMessageDump`);
 `QueueEngineUtil::logRejectMessage`.*
 
 **A10. Changing `maxDeliveryAttempts` updates stored messages only between limited and unlimited.**
@@ -304,8 +307,9 @@ Recovery must finish within `startupRecoveryMaxDurationMs` (default 20 min), wit
 ## 7. Replication and leader election (R)
 
 **R1. One leader per cluster, chosen by a Raft-style vote.** A candidate needs `quorum` votes. If `quorum` is `0`
-(default), it is half the nodes plus one. This guarantees at most one leader, even during a network split.
-*Source: `mqb/mqbnet/mqbnet_elector.h` (`mqbnet::Elector`); `mqbcfg.xsd` (`ElectorConfig.quorum`).*
+(default), it is half the nodes plus one, which guarantees at most one leader even during a network split.
+Any other value is used as given and is not checked; a value below a majority loses that guarantee.
+*Source: `mqb/mqbnet/mqbnet_elector.h` (`mqbnet::Elector`); `mqb/mqbcfg/mqbcfg_clusterquorummanager.cpp` (`ClusterQuorumManager::setQuorum`); `mqbcfg.xsd` (`ElectorConfig.quorum`).*
 
 **R2. Node election states:** DORMANT, FOLLOWER, CANDIDATE, LEADER. A follower starts an election when the leader
 misses `heartbeatMissCount` (10) heartbeats. Each node waits a random time first, so they do not all run at once.
