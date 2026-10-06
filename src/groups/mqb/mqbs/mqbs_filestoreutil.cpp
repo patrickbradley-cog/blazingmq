@@ -1429,11 +1429,14 @@ int FileStoreUtil::writeMessageRecordImpl(
     BSLS_ASSERT_SAFE(dataOffset >= 0);
 
     enum {
-        rc_SUCCESS              = 0,
-        rc_MISSING_PAYLOAD      = -1,
-        rc_MISSING_PAYLOAD_HDR  = -2,
-        rc_INCOMPLETE_PAYLOAD   = -3,
-        rc_DATA_OFFSET_MISMATCH = -4
+        rc_SUCCESS                = 0,
+        rc_MISSING_PAYLOAD        = -1,
+        rc_MISSING_PAYLOAD_HDR    = -2,
+        rc_INCOMPLETE_PAYLOAD     = -3,
+        rc_DATA_OFFSET_MISMATCH   = -4,
+        rc_INVALID_MESSAGE_LENGTH = -5,
+        rc_DATA_FILE_FULL         = -6,
+        rc_JOURNAL_FILE_FULL      = -7
     };
 
     // Extract payload's position from blob, based on 'recordPosition'.  Per
@@ -1469,6 +1472,12 @@ int FileStoreUtil::writeMessageRecordImpl(
 
     const int messageSizeVal = dataHeader->messageWords() *
                                bmqp::Protocol::k_WORD_SIZE;
+    if (messageSizeVal <= 0) {
+        BALL_LOG_ERROR << "DataHeader of the DATA record declares an invalid "
+                       << "message length of " << messageSizeVal << " bytes.";
+        return rc_INVALID_MESSAGE_LENGTH;  // RETURN
+    }
+
     if (messageSize) {
         *messageSize = messageSizeVal;
     }
@@ -1492,7 +1501,25 @@ int FileStoreUtil::writeMessageRecordImpl(
         return 10 * rc + rc_INCOMPLETE_PAYLOAD;  // RETURN
     }
 
-    BSLS_ASSERT_SAFE(dataFile.fileSize() >= (*dataFilePos + messageSizeVal));
+    // Ensure that the DATA file has room for the payload.  Note that this
+    // must be a runtime check (and not an assertion), because the length
+    // comes from the record received from the peer.
+
+    if (dataFile.fileSize() <
+        (*dataFilePos + static_cast<bsls::Types::Uint64>(messageSizeVal))) {
+        BALL_LOG_ERROR << "DATA record of " << messageSizeVal << " bytes does "
+                       << "not fit in the DATA file of " << dataFile.fileSize()
+                       << " bytes at offset " << *dataFilePos << ".";
+        return rc_DATA_FILE_FULL;  // RETURN
+    }
+
+    if (journal.fileSize() <
+        (*journalPos + 3 * FileStoreProtocol::k_JOURNAL_RECORD_SIZE)) {
+        BALL_LOG_ERROR << "Journal file of " << journal.fileSize()
+                       << " bytes has no room for a record at offset "
+                       << *journalPos << ".";
+        return rc_JOURNAL_FILE_FULL;  // RETURN
+    }
 
     // Append payload to data file.
 
@@ -1509,10 +1536,6 @@ int FileStoreUtil::writeMessageRecordImpl(
     bsls::Types::Uint64 recordOffset = *journalPos;
 
     // Append message record to journal.
-
-    BSLS_ASSERT_SAFE(
-        journal.fileSize() >=
-        (*journalPos + 3 * FileStoreProtocol::k_JOURNAL_RECORD_SIZE));
 
     bmqu::BlobUtil::copyToRawBufferFromIndex(
         journal.block().base() + recordOffset,
