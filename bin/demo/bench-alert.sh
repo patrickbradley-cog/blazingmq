@@ -13,6 +13,9 @@
 # Env: BUILD_DIR (default: <repo>/build/blazingmq), REBUILD=0 to skip rebuild
 #      SLACK_ONCALL_BOT_TOKEN or COG_GTM_DEMO_SLACK_BOT_TOKEN (first that can post)
 #      SLACK_CHANNEL (default: C0BNWUGCWBS, #oncall-alerts)
+#      BENCH_LABEL (tag for this run in the ops-console history, e.g. "fix PR")
+#      BMQ_DEMO_STATE (default ~/.bmq-demo): history.jsonl + incident.json for
+#      bin/demo/ops-console.py
 set -euo pipefail
 
 # Works from a copy outside the tree (e.g. /tmp during `git bisect run`):
@@ -77,6 +80,18 @@ print("%.1f %.2f" % (m, m / float(sys.argv[1])))
 REGRESSED="$(python3 -c 'import sys; print(int(float(sys.argv[1]) >= float(sys.argv[2])))' "$RATIO" "$THRESHOLD")"
 echo "${METRIC}: median ${MEDIAN_MS} ms vs baseline ${BASELINE_MS} ms (${RATIO}x, threshold ${THRESHOLD}x)"
 
+STATE_DIR="${BMQ_DEMO_STATE:-$HOME/.bmq-demo}"
+mkdir -p "$STATE_DIR"
+python3 - "$STATE_DIR" "$MEDIAN_MS" "$BASELINE_MS" "$RATIO" "$THRESHOLD" \
+    "$(git -C "$REPO_ROOT" rev-parse --short=10 HEAD)" "${BENCH_LABEL:-$MODE}" <<'PY'
+import json, os, sys, time
+state, med, base, ratio, thr, sha, label = sys.argv[1:]
+row = {"time": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()), "sha": sha, "label": label,
+       "median_ms": float(med), "baseline_ms": float(base), "ratio": float(ratio), "threshold": float(thr)}
+with open(os.path.join(state, "history.jsonl"), "a") as f:
+    f.write(json.dumps(row) + "\n")
+PY
+
 if [ "$REGRESSED" != 1 ]; then
     echo "OK: no regression"
     exit 0
@@ -115,7 +130,19 @@ print(json.dumps({
 PY
 )"
 
+open_incident() {
+    python3 - "$STATE_DIR" "$MEDIAN_MS" "$BASELINE_MS" "$RATIO" "$RANGE" "${1:-}" <<'PY'
+import json, os, sys, time
+state, cur, base, ratio, rng, ts = sys.argv[1:]
+inc = {"status": "open", "opened": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()),
+       "title": "PERF REGRESSION bmqt::UriParser::parse: %s ms -> %s ms (%sx), range %s" % (base, cur, ratio, rng),
+       "slack_ts": ts}
+json.dump(inc, open(os.path.join(state, "incident.json"), "w"), indent=2)
+PY
+}
+
 if [ "$MODE" = dry-run ]; then
+    open_incident
     echo "$PAYLOAD"
     exit 0
 fi
@@ -129,6 +156,7 @@ for var in SLACK_ONCALL_BOT_TOKEN COG_GTM_DEMO_SLACK_BOT_TOKEN; do
         --data "$PAYLOAD")"
     if python3 -c 'import json,sys; sys.exit(0 if json.loads(sys.argv[1]).get("ok") else 1)' "$resp"; then
         ts="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["ts"])' "$resp")"
+        open_incident "$ts"
         echo "ALERT POSTED to ${SLACK_CHANNEL} via ${var} (ts=${ts})"
         exit 0
     fi
