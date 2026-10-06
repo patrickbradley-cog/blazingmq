@@ -21,6 +21,8 @@
 #include <mqbevt_callbackevent.h>
 #include <mqbmock_dispatchereventsource.h>
 
+#include <bmqex_systemexecutor.h>
+
 // BDE
 #include <bdlb_print.h>
 #include <bdlb_string.h>
@@ -195,8 +197,7 @@ int Dispatcher::numProcessors(
 bmqex::Executor Dispatcher::executor(
     BSLA_MAYBE_UNUSED const mqbi::DispatcherClient* client) const
 {
-    BSLS_ASSERT(false && "Not yet implemented");
-    return bmqex::Executor();
+    return bmqex::SystemExecutor();
 }
 
 bsls::Types::Int64 Dispatcher::numProcessorEvents(

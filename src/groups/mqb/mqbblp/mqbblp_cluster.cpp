@@ -2480,20 +2480,11 @@ void Cluster::processControlMessage(
             << BMQTSK_ALARMLOG_END;
     } break;  // BREAK
     case MsgChoice::SELECTION_ID_ADMIN_COMMAND: {
-        // Assume this is a rerouted command, so just execute it on the
-        // application
-        const bmqp_ctrlmsg::AdminCommand& adminCommand =
-            message.choice().adminCommand();
-        const bsl::string& cmd = adminCommand.command();
-        d_adminCb(source->hostName(),
-                  cmd,
-                  bdlf::BindUtil::bind(&Cluster::onProcessedAdminCommand,
-                                       this,
-                                       source,
-                                       message,
-                                       bdlf::PlaceHolders::_1,   // rc
-                                       bdlf::PlaceHolders::_2),  // response
-                  true);  // from reroute
+        // Admin command rerouting is disabled.  Peer sessions do not carry
+        // the original requester's authorization.
+        BALL_LOG_WARN << description()
+                      << ": rejected unsupported admin command from node "
+                      << source->nodeDescription();
     } break;
     case MsgChoice::SELECTION_ID_ADMIN_COMMAND_RESPONSE: {
         requestManager().processResponse(message);
