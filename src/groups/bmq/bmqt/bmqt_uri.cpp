@@ -21,17 +21,25 @@
 #include <bmqu_memoutstream.h>
 
 // BDE
+#include <ball_log.h>
 #include <bdlb_print.h>
+#include <bdlb_string.h>
 #include <bdlb_stringrefutil.h>
 #include <bdlma_localsequentialallocator.h>
+#include <bdlpcre_regex.h>
 #include <bsl_ostream.h>
+#include <bsl_utility.h>
+#include <bsl_vector.h>
 #include <bsla_fallthrough.h>
+#include <bslma_newdeleteallocator.h>
 #include <bsls_assert.h>
 
 namespace BloombergLP {
 namespace bmqt {
 
 namespace {
+BALL_LOG_SET_NAMESPACE_CATEGORY("BMQT.URI");
+
 const bsl::string_view k_SCHEME           = "bmq";
 const bsl::string_view k_SCHEME_SEPARATED = "bmq://";
 const bsl::string_view k_QUERY_ID         = "id";
@@ -56,6 +64,105 @@ const bsl::string_view k_TIER_PREFIX      = ".~";
         }                                                                     \
         return UriParser::UriParseResult::e_SUCCESS;                          \
     } while (0)
+
+/// @brief Canonical grammar of a BlazingMQ queue URI, as documented in
+/// `bmqt_uri.h`, compiled once per process.  Used to cross-check the result
+/// of the hand-written parser below so that any drift between the documented
+/// grammar and the parser is caught early.
+/// NOTE: JIT is intentionally not enabled so that sanitizer and production
+///       builds exercise the exact same matching code path.  UTF-8 mode is
+///       enabled so that malformed multi-byte input is reported explicitly.
+/// NOTE: the patterns use the new/delete allocator: they live for the whole
+///       process and must not show up as leaks in the global allocator.
+struct CanonicalUriGrammar {
+    enum Part {
+        e_URI = 0,
+        e_AUTHORITY,
+        e_DOMAIN,
+        e_TIER,
+        e_PATH,
+        e_QUERY_ID,
+        e_NUM_PARTS
+    };
+
+    static const bdlpcre::RegEx& pattern(Part part)
+    {
+        static const bdlpcre::RegEx* s_patterns_p = compileAll();
+        return s_patterns_p[part];
+    }
+
+  private:
+    static const bdlpcre::RegEx* compileAll()
+    {
+        static const char* const k_PATTERNS[e_NUM_PARTS] = {
+            "^bmq:\\/\\/"
+            "(?P<authority>"
+            "(?P<domain>[-a-zA-Z0-9\\._]*)"
+            "(?P<tier>\\.~[-a-zA-Z0-9]*)?"
+            ")/"
+            "(?P<path>[-a-zA-Z0-9_~\\.]*)"
+            "(?P<q1>\\?(id=)[-a-zA-Z0-9_\\.]+)?$",
+            "^[-a-zA-Z0-9\\._]+(\\.~[-a-zA-Z0-9]+)?$",
+            "^[-a-zA-Z0-9\\._]+$",
+            "^[-a-zA-Z0-9]+$",
+            "^[-a-zA-Z0-9_~\\.]+$",
+            "^[-a-zA-Z0-9_\\.]+$"};
+
+        bslma::Allocator* alloc   = &bslma::NewDeleteAllocator::singleton();
+        bdlpcre::RegEx*   regexes = static_cast<bdlpcre::RegEx*>(
+            alloc->allocate(e_NUM_PARTS * sizeof(bdlpcre::RegEx)));
+
+        for (int i = 0; i < e_NUM_PARTS; ++i) {
+            new (regexes + i) bdlpcre::RegEx(alloc);
+
+            bsl::string error(alloc);
+            size_t      errorOffset = 0;
+            const int   rc          = regexes[i].prepare(&error,
+                                              &errorOffset,
+                                              k_PATTERNS[i],
+                                              bdlpcre::RegEx::k_FLAG_UTF8);
+            if (rc != 0) {
+                BALL_LOG_ERROR << "#URI_REGEXP "
+                               << "Failed to compile URI regular expression "
+                               << "[pattern: " << i << ", error: '" << error
+                               << "', offset: " << errorOffset << "]";
+            }
+            BSLS_ASSERT_OPT(rc == 0 &&
+                            "Failed to compile URI regular expression");
+        }
+        return regexes;
+    }
+};
+
+/// @brief Cross-check the specified `part` of a URI, already accepted by the
+/// parser, against its canonical pattern.  Log a warning on mismatch; the
+/// parse result itself is not affected.
+void validateCanonicalPart(CanonicalUriGrammar::Part part,
+                           const bslstl::StringRef&  value)
+{
+    if (value.isEmpty()) {
+        return;  // RETURN
+    }
+
+    bslma::Allocator* alloc = &bslma::NewDeleteAllocator::singleton();
+
+    // The canonical form of a URI is lower case (RFC 3986, section 6.2.2.1).
+    bsl::string canonical(value.data(), value.length(), alloc);
+    bdlb::String::toLower(&canonical);
+
+    bsl::vector<bsl::pair<size_t, size_t> > matches(alloc);
+    const int rc = CanonicalUriGrammar::pattern(part).match(
+        &matches,
+        canonical.data(),
+        canonical.length());
+    if (BSLS_PERFORMANCEHINT_PREDICT_UNLIKELY(rc != 0)) {
+        BSLS_PERFORMANCEHINT_UNLIKELY_HINT;
+        BALL_LOG_WARN << "#URI_REGEXP "
+                      << "Parsed URI part does not match canonical form "
+                      << "[part: " << part << ", value: '" << value
+                      << "', rc: " << rc << "]";
+    }
+}
 
 struct UriParsingContext {
     const bslstl::StringRef d_uri;
@@ -570,7 +677,7 @@ int UriParser::parse(Uri*                     result,
         // Do not include the ".~" tier prefix in tier:
         const size_t tierStart = domainStart + domainLength +
                                  k_TIER_PREFIX.length();
-        size_t       tierLength = 0;
+        size_t tierLength = 0;
         rc = ctx.parseTier(errorDescription, &tierLength, tierStart);
         BMQT_RETURN_ON_BAD_RC(rc, result);
 
@@ -582,10 +689,10 @@ int UriParser::parse(Uri*                     result,
     //      [my-domain.~dv] - authority
     // Note that we include both domain and optional tier continuously:
     // tier separator ".~" is also included.
-    const size_t authorityLength =
-        domainLength +
-        (ctx.hasTier() ? (k_TIER_PREFIX.length() + result->d_tier.length())
-                       : 0);
+    const size_t authorityLength = domainLength +
+                                   (ctx.hasTier() ? (k_TIER_PREFIX.length() +
+                                                     result->d_tier.length())
+                                                  : 0);
     result->d_authority.assign(result->d_uri.data() + domainStart,
                                authorityLength);
 
@@ -641,6 +748,15 @@ int UriParser::parse(Uri*                     result,
     // Step 7: validate mandatory fields
     rc = ctx.validateResult(errorDescription, *result);
     BMQT_RETURN_ON_BAD_RC(rc, result);
+
+    // Step 8: cross-check against the canonical URI grammar
+    validateCanonicalPart(CanonicalUriGrammar::e_URI, result->d_uri);
+    validateCanonicalPart(CanonicalUriGrammar::e_AUTHORITY,
+                          result->d_authority);
+    validateCanonicalPart(CanonicalUriGrammar::e_DOMAIN, result->d_domain);
+    validateCanonicalPart(CanonicalUriGrammar::e_TIER, result->d_tier);
+    validateCanonicalPart(CanonicalUriGrammar::e_PATH, result->d_path);
+    validateCanonicalPart(CanonicalUriGrammar::e_QUERY_ID, result->d_query_id);
 
 #undef BMQT_RETURN_ON_BAD_RC
 
