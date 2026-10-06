@@ -32,41 +32,21 @@
 namespace BloombergLP {
 namespace mqbmock {
 
-namespace {
-
-struct DispatcherExecutor {
-    Dispatcher* d_dispatcher_p;
-
-    void post(const mqbi::Dispatcher::VoidFunction& functor) const
-    {
-        d_dispatcher_p->_enqueue(functor);
-    }
-
-    void dispatch(const mqbi::Dispatcher::VoidFunction& functor) const
-    {
-        d_dispatcher_p->_execute(functor);
-    }
-
-    bool operator==(const DispatcherExecutor& other) const
-    {
-        return d_dispatcher_p == other.d_dispatcher_p;
-    }
-
-    bool operator!=(const DispatcherExecutor& other) const
-    {
-        return !(*this == other);
-    }
-};
-
-}  // close unnamed namespace
-
 // ----------------
 // class Dispatcher
 // ----------------
 
 // CREATORS
 Dispatcher::Dispatcher(bslma::Allocator* allocator)
+: Dispatcher(bmqex::Executor(), allocator)
+{
+    // NOTHING
+}
+
+Dispatcher::Dispatcher(const bmqex::Executor& executor,
+                       bslma::Allocator*      allocator)
 : d_allocator_p(allocator)
+, d_executor(executor, allocator)
 , d_eventSource_sp(
       bsl::allocate_shared<mqbmock::DispatcherEventSource>(allocator))
 , d_eventsForClients(allocator)
@@ -147,16 +127,17 @@ void Dispatcher::executeOnAllQueues(
     }
 }
 
-void Dispatcher::_enqueue(const mqbi::Dispatcher::VoidFunction& functor)
-{
-    bslmt::LockGuard<bslmt::Mutex> lock(&d_mutex);
-    d_queue.push(functor);
-}
-
 void Dispatcher::_execute(const mqbi::Dispatcher::VoidFunction& functor)
 {
-    _enqueue(functor);
-    if (!d_enqueueOnly) {
+    bool firstToEnqueue = false;
+
+    {
+        bslmt::LockGuard<bslmt::Mutex> lock(&d_mutex);
+        firstToEnqueue = d_queue.empty();
+        d_queue.push(functor);
+    }
+
+    if (!d_enqueueOnly && firstToEnqueue) {
         processQueue();
     }
 }
@@ -222,7 +203,8 @@ int Dispatcher::numProcessors(
 bmqex::Executor Dispatcher::executor(
     BSLA_MAYBE_UNUSED const mqbi::DispatcherClient* client) const
 {
-    return DispatcherExecutor{const_cast<Dispatcher*>(this)};
+    BSLS_ASSERT(d_executor);
+    return d_executor;
 }
 
 bsls::Types::Int64 Dispatcher::numProcessorEvents(

@@ -22,6 +22,7 @@
 #include <mqbnet_mockcluster.h>
 #include <mqbstat_clusterstats.h>
 
+#include <bmqex_sequentialcontext.h>
 #include <bmqio_testchannel.h>
 #include <bmqp_event.h>
 #include <bmqp_schemaeventbuilder.h>
@@ -87,8 +88,11 @@ static void rejectPeerAdminCommand(bool                     isFSMWorkflow,
     statContexts["clusters"]     = stats.get();
     statContexts["clusterNodes"] = stats.get();
 
-    mqbmock::Dispatcher                    dispatcher(allocator);
-    int                                    callbackCount = 0;
+    bmqex::SequentialContext dispatcherContext(allocator);
+    BMQTST_ASSERT_EQ(dispatcherContext.start(), 0);
+    const bmqex::Executor dispatcherExecutor = dispatcherContext.executor();
+    mqbmock::Dispatcher   dispatcher(dispatcherExecutor, allocator);
+    int                   callbackCount = 0;
     mqbnet::Session::AdminCommandEnqueueCb adminCb =
         [&callbackCount](const bsl::string&,
                          const bsl::string&,
