@@ -304,6 +304,169 @@ class Tester {
     }
 };
 
+/// Scaffolding for a single `writeMessageRecordImpl` invocation: a
+/// fabricated JOURNAL and DATA mapped file pair, and the replication event
+/// holding a Message journal record immediately followed by its DATA
+/// payload of the specified `payloadLen` bytes.
+class MessageTester {
+  private:
+    // DATA
+    bsl::vector<char> d_journalBuffer;
+
+    bsl::vector<char> d_dataBuffer;
+
+    mqbs::MappedFileDescriptor d_journal;
+
+    mqbs::MappedFileDescriptor d_data;
+
+    bdlbb::PooledBlobBufferFactory d_bufferFactory;
+
+    bdlbb::Blob d_event;
+
+    bsls::Types::Uint64 d_journalPos;
+
+    bsls::Types::Uint64 d_dataFilePos;
+
+  public:
+    // CREATORS
+
+    /// Create a tester whose event carries a well-formed DATA record with
+    /// a payload of the specified `payloadLen` bytes, which must be a
+    /// multiple of `bmqp::Protocol::k_DWORD_SIZE`.
+    MessageTester(unsigned int payloadLen, bslma::Allocator* allocator)
+    : d_journalBuffer(k_FILE_BUFFER_SIZE, '\0', allocator)
+    , d_dataBuffer(k_FILE_BUFFER_SIZE, '\0', allocator)
+    , d_journal()
+    , d_data()
+    , d_bufferFactory(1024, allocator)
+    , d_event(&d_bufferFactory, allocator)
+    , d_journalPos(0)
+    , d_dataFilePos(0)
+    {
+        BSLS_ASSERT_OPT(payloadLen >= sizeof(mqbs::DataHeader));
+        BSLS_ASSERT_OPT(0 == payloadLen % bmqp::Protocol::k_DWORD_SIZE);
+
+        d_journal.setFd(1)
+            .setFileSize(k_FILE_BUFFER_SIZE)
+            .setBlock(
+                mqbs::MemoryBlock(&d_journalBuffer[0], k_FILE_BUFFER_SIZE))
+            .setMapping(&d_journalBuffer[0])
+            .setMappingSize(k_FILE_BUFFER_SIZE);
+
+        d_data.setFd(2)
+            .setFileSize(k_FILE_BUFFER_SIZE)
+            .setBlock(mqbs::MemoryBlock(&d_dataBuffer[0], k_FILE_BUFFER_SIZE))
+            .setMapping(&d_dataBuffer[0])
+            .setMappingSize(k_FILE_BUFFER_SIZE);
+
+        const unsigned int recordLen =
+            mqbs::FileStoreProtocol::k_JOURNAL_RECORD_SIZE + payloadLen;
+        bsl::vector<char> raw(recordLen, 'A', allocator);
+
+        bsl::memset(&raw[0],
+                    0,
+                    mqbs::FileStoreProtocol::k_JOURNAL_RECORD_SIZE);
+        mqbs::MemoryBlock recordBlock(
+            &raw[0],
+            mqbs::FileStoreProtocol::k_JOURNAL_RECORD_SIZE);
+        mqbs::OffsetPtr<mqbs::MessageRecord> rec(recordBlock, 0);
+        new (rec.get()) mqbs::MessageRecord();
+        rec->header()
+            .setType(mqbs::RecordType::e_MESSAGE)
+            .setPrimaryLeaseId(1U)
+            .setSequenceNumber(1U);
+        rec->setRefCount(1)
+            .setQueueKey(
+                mqbu::StorageKey(mqbu::StorageKey::BinaryRepresentation(),
+                                 "12345"))
+            .setMessageOffsetDwords(0)
+            .setMagic(mqbs::RecordHeader::k_MAGIC);
+
+        char* payload = &raw[0] +
+                        mqbs::FileStoreProtocol::k_JOURNAL_RECORD_SIZE;
+        new (payload) mqbs::DataHeader();
+        dataHeader(payload).setMessageWords(payloadLen /
+                                            bmqp::Protocol::k_WORD_SIZE);
+
+        bdlbb::BlobUtil::append(&d_event, &raw[0], recordLen);
+    }
+
+    // MANIPULATORS
+
+    /// Return the `DataHeader` of the DATA record carried by the event, so
+    /// that a test can corrupt one of its fields.
+    mqbs::DataHeader& dataHeader()
+    {
+        bmqu::BlobPosition pos;
+        const int          rc = bmqu::BlobUtil::findOffsetSafe(
+            &pos,
+            d_event,
+            bmqu::BlobPosition(0, 0),
+            mqbs::FileStoreProtocol::k_JOURNAL_RECORD_SIZE);
+        BSLS_ASSERT_OPT(0 == rc);
+
+        return dataHeader(d_event.buffer(pos.buffer()).data() + pos.byte());
+    }
+
+    /// Declare the DATA mapped file to be of the specified `size` bytes,
+    /// leaving its (larger) backing buffer untouched.
+    void setDataFileSize(bsls::Types::Uint64 size)
+    {
+        d_data.setFileSize(size);
+    }
+
+    /// Declare the JOURNAL mapped file to be of the specified `size` bytes,
+    /// leaving its (larger) backing buffer untouched.
+    void setJournalFileSize(bsls::Types::Uint64 size)
+    {
+        d_journal.setFileSize(size);
+    }
+
+    /// Set the current write position in the DATA file to the specified
+    /// `pos`.
+    void setDataFilePos(bsls::Types::Uint64 pos) { d_dataFilePos = pos; }
+
+    /// Invoke `writeMessageRecordImpl` on the event and return its result
+    /// code.
+    int write()
+    {
+        return mqbs::FileStoreUtil::writeMessageRecordImpl(
+            &d_journalPos,
+            &d_dataFilePos,
+            d_event,
+            bmqu::BlobPosition(0, 0),
+            d_journal,
+            d_data,
+            d_dataFilePos);
+    }
+
+    // ACCESSORS
+
+    /// Return true if nothing has been written to the JOURNAL file.
+    bool isJournalPristine() const { return isPristine(d_journalBuffer); }
+
+    /// Return true if nothing has been written to the DATA file.
+    bool isDataPristine() const { return isPristine(d_dataBuffer); }
+
+  private:
+    // PRIVATE CLASS METHODS
+    static mqbs::DataHeader& dataHeader(char* address)
+    {
+        return *reinterpret_cast<mqbs::DataHeader*>(address);
+    }
+
+    static bool isPristine(const bsl::vector<char>& buffer)
+    {
+        for (size_t i = 0; i < buffer.size(); ++i) {
+            if ('\0' != buffer[i]) {
+                return false;  // RETURN
+            }
+        }
+
+        return true;
+    }
+};
+
 }  // close unnamed namespace
 
 // ============================================================================
@@ -521,6 +684,90 @@ static void test2_writeQueueCreationRecordImplMalformed()
     }
 }
 
+static void test3_writeMessageRecordImpl()
+// ------------------------------------------------------------------------
+// WRITE MESSAGE RECORD IMPL
+//
+// Concerns:
+//   A well-formed DATA record is applied to the DATA and JOURNAL files.
+//
+// Testing:
+//   writeMessageRecordImpl()
+// ------------------------------------------------------------------------
+{
+    bmqtst::TestHelper::printTestName("WRITE MESSAGE RECORD IMPL");
+
+    bslma::Allocator* alloc = bmqtst::TestHelperUtil::allocator();
+
+    MessageTester tester(64, alloc);
+
+    BMQTST_ASSERT_EQ(0, tester.write());
+    BMQTST_ASSERT(!tester.isDataPristine());
+    BMQTST_ASSERT(!tester.isJournalPristine());
+}
+
+static void test4_writeMessageRecordImplMalformed()
+// ------------------------------------------------------------------------
+// WRITE MESSAGE RECORD IMPL MALFORMED
+//
+// Concerns:
+//   A DATA record which does not fit in the space remaining in the DATA
+//   or JOURNAL file, or whose 'DataHeader' declares a zero length, is
+//   rejected with a non-zero result code, and leaves both files untouched
+//   (i.e., no write past the end of the mapped files).
+//
+// Testing:
+//   writeMessageRecordImpl()
+// ------------------------------------------------------------------------
+{
+    bmqtst::TestHelper::printTestName("WRITE MESSAGE RECORD IMPL MALFORMED");
+
+    bslma::Allocator* alloc = bmqtst::TestHelperUtil::allocator();
+
+    {
+        // A record larger than the whole DATA file.
+        MessageTester tester(1024, alloc);
+        tester.setDataFileSize(1024 - bmqp::Protocol::k_DWORD_SIZE);
+
+        BMQTST_ASSERT_NE(0, tester.write());
+        BMQTST_ASSERT(tester.isDataPristine());
+        BMQTST_ASSERT(tester.isJournalPristine());
+    }
+
+    {
+        // A record larger than the space remaining at the end of the DATA
+        // file.
+        MessageTester tester(64, alloc);
+        tester.setDataFileSize(1024);
+        tester.setDataFilePos(1024 - 32);
+
+        BMQTST_ASSERT_NE(0, tester.write());
+        BMQTST_ASSERT(tester.isDataPristine());
+        BMQTST_ASSERT(tester.isJournalPristine());
+    }
+
+    {
+        // A JOURNAL file without room for the record.
+        MessageTester tester(64, alloc);
+        tester.setJournalFileSize(
+            3 * mqbs::FileStoreProtocol::k_JOURNAL_RECORD_SIZE - 1);
+
+        BMQTST_ASSERT_NE(0, tester.write());
+        BMQTST_ASSERT(tester.isDataPristine());
+        BMQTST_ASSERT(tester.isJournalPristine());
+    }
+
+    {
+        // Zero 'messageWords'.
+        MessageTester tester(64, alloc);
+        tester.dataHeader().setMessageWords(0);
+
+        BMQTST_ASSERT_NE(0, tester.write());
+        BMQTST_ASSERT(tester.isDataPristine());
+        BMQTST_ASSERT(tester.isJournalPristine());
+    }
+}
+
 // ============================================================================
 //                                 MAIN PROGRAM
 // ----------------------------------------------------------------------------
@@ -531,6 +778,8 @@ int main(int argc, char* argv[])
 
     switch (_testCase) {
     case 0:
+    case 4: test4_writeMessageRecordImplMalformed(); break;
+    case 3: test3_writeMessageRecordImpl(); break;
     case 2: test2_writeQueueCreationRecordImplMalformed(); break;
     case 1: test1_writeQueueCreationRecordImpl(); break;
     default: {
