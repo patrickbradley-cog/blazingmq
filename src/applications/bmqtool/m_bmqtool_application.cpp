@@ -557,7 +557,8 @@ int Application::initialize()
             d_parameters.queueFlags(),
             queueOptions);
         if (!result) {
-            BALL_LOG_ERROR << "Error while opening queue: [result: " << result
+            BALL_LOG_ERROR << "Error while opening queue: [uri: "
+                           << d_parameters.queueUri() << ", result: " << result
                            << "]";
             return e_OPEN_QUEUE_ERROR;  // RETURN
         }
