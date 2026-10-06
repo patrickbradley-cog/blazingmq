@@ -21,8 +21,6 @@
 #include <mqbevt_callbackevent.h>
 #include <mqbmock_dispatchereventsource.h>
 
-#include <bmqex_systemexecutor.h>
-
 // BDE
 #include <bdlb_print.h>
 #include <bdlb_string.h>
@@ -33,6 +31,24 @@
 
 namespace BloombergLP {
 namespace mqbmock {
+
+namespace {
+
+struct DispatcherExecutor {
+    Dispatcher* d_dispatcher_p;
+
+    void post(const mqbi::Dispatcher::VoidFunction& functor) const
+    {
+        d_dispatcher_p->_execute(functor);
+    }
+
+    bool operator==(const DispatcherExecutor& other) const
+    {
+        return d_dispatcher_p == other.d_dispatcher_p;
+    }
+};
+
+}  // close unnamed namespace
 
 // ----------------
 // class Dispatcher
@@ -197,7 +213,7 @@ int Dispatcher::numProcessors(
 bmqex::Executor Dispatcher::executor(
     BSLA_MAYBE_UNUSED const mqbi::DispatcherClient* client) const
 {
-    return bmqex::SystemExecutor();
+    return DispatcherExecutor{const_cast<Dispatcher*>(this)};
 }
 
 bsls::Types::Int64 Dispatcher::numProcessorEvents(
