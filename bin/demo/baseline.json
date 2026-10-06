@@ -1,0 +1,8 @@
+{
+  "metric": "bmqt::UriParser::parse threads=1 (100k parses, real time)",
+  "parse_threads1_ms": 39.2,
+  "samples_ms": [40.4, 39.0, 39.2, 38.7, 44.2],
+  "alert_ratio": 1.5,
+  "last_good_sha": "ce900fff5d8a45d3815ef221f6282970c47aff7a",
+  "measured_on": "8-core Devin VM, gcc 11.4, bin/build-ubuntu.sh ubuntu-x64 preset (Debug)"
+}
