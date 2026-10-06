@@ -567,8 +567,9 @@ int UriParser::parse(Uri*                     result,
     // bmq://my-domain.~dv/queue_abcdef?id=foo
     //                 [dv] - tier
     if (ctx.hasTier()) {
-        // Do not include ".~" in tier (+2):
-        const size_t tierStart  = domainStart + domainLength + 2;
+        // Do not include the ".~" tier prefix in tier:
+        const size_t tierStart = domainStart + domainLength +
+                                 k_TIER_PREFIX.length();
         size_t       tierLength = 0;
         rc = ctx.parseTier(errorDescription, &tierLength, tierStart);
         BMQT_RETURN_ON_BAD_RC(rc, result);
@@ -580,9 +581,11 @@ int UriParser::parse(Uri*                     result,
     // bmq://my-domain.~dv/queue_abcdef?id=foo
     //      [my-domain.~dv] - authority
     // Note that we include both domain and optional tier continuously:
-    // tier separator ".~" is also included (+2).
+    // tier separator ".~" is also included.
     const size_t authorityLength =
-        domainLength + (ctx.hasTier() ? (2 + result->d_tier.length()) : 0);
+        domainLength +
+        (ctx.hasTier() ? (k_TIER_PREFIX.length() + result->d_tier.length())
+                       : 0);
     result->d_authority.assign(result->d_uri.data() + domainStart,
                                authorityLength);
 
