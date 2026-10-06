@@ -155,15 +155,8 @@ void Dispatcher::_enqueue(const mqbi::Dispatcher::VoidFunction& functor)
 
 void Dispatcher::_execute(const mqbi::Dispatcher::VoidFunction& functor)
 {
-    bool firstToEnqueue = false;
-
-    {
-        bslmt::LockGuard<bslmt::Mutex> lock(&d_mutex);
-        firstToEnqueue = d_queue.empty();
-        d_queue.push(functor);
-    }
-
-    if (!d_enqueueOnly && firstToEnqueue) {
+    _enqueue(functor);
+    if (!d_enqueueOnly) {
         processQueue();
     }
 }

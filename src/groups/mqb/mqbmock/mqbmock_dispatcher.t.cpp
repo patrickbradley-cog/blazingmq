@@ -46,24 +46,27 @@ static void test1_executor()
 
     executor.post(callback);
     BMQTST_ASSERT_EQ(callCount, 0);
-    dispatcher.processQueue();
-    BMQTST_ASSERT_EQ(callCount, 1);
     executor.dispatch(callback);
     BMQTST_ASSERT_EQ(callCount, 2);
+
+    executor.post(callback);
+    BMQTST_ASSERT_EQ(callCount, 2);
+    dispatcher.execute(callback, client.dispatcherClientData());
+    BMQTST_ASSERT_EQ(callCount, 4);
 
     dispatcher.setEnqueueOnly(true);
     executor.post(callback);
     executor.dispatch(callback);
-    BMQTST_ASSERT_EQ(callCount, 2);
-    dispatcher.processQueue();
     BMQTST_ASSERT_EQ(callCount, 4);
+    dispatcher.processQueue();
+    BMQTST_ASSERT_EQ(callCount, 6);
 
     dispatcher.setEnqueueOnly(false);
     dispatcher.unregisterClient(&client);
     executor.post(callback);
-    BMQTST_ASSERT_EQ(callCount, 4);
+    BMQTST_ASSERT_EQ(callCount, 6);
     dispatcher.processQueue();
-    BMQTST_ASSERT_EQ(callCount, 5);
+    BMQTST_ASSERT_EQ(callCount, 7);
 }
 
 }  // close unnamed namespace
