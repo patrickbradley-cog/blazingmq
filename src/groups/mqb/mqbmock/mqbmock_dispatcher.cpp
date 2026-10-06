@@ -38,7 +38,15 @@ namespace mqbmock {
 
 // CREATORS
 Dispatcher::Dispatcher(bslma::Allocator* allocator)
+: Dispatcher(bmqex::Executor(), allocator)
+{
+    // NOTHING
+}
+
+Dispatcher::Dispatcher(const bmqex::Executor& executor,
+                       bslma::Allocator*      allocator)
 : d_allocator_p(allocator)
+, d_executor(executor, allocator)
 , d_eventSource_sp(
       bsl::allocate_shared<mqbmock::DispatcherEventSource>(allocator))
 , d_eventsForClients(allocator)
@@ -195,8 +203,8 @@ int Dispatcher::numProcessors(
 bmqex::Executor Dispatcher::executor(
     BSLA_MAYBE_UNUSED const mqbi::DispatcherClient* client) const
 {
-    BSLS_ASSERT(false && "Not yet implemented");
-    return bmqex::Executor();
+    BSLS_ASSERT(d_executor);
+    return d_executor;
 }
 
 bsls::Types::Int64 Dispatcher::numProcessorEvents(

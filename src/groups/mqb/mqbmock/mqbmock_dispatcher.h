@@ -74,6 +74,9 @@ class Dispatcher BSLS_KEYWORD_FINAL : public mqbi::Dispatcher {
     /// Allocator to use
     bslma::Allocator* d_allocator_p;
 
+    /// Executor returned by `executor`, if configured.
+    bmqex::Executor d_executor;
+
     /// The default event source
     bsl::shared_ptr<mqbi::DispatcherEventSource> d_eventSource_sp;
 
@@ -112,6 +115,10 @@ class Dispatcher BSLS_KEYWORD_FINAL : public mqbi::Dispatcher {
     /// Create a `mqbmock::Dispather` object.  Use the specified `allocator`
     /// for any memory allocation.
     explicit Dispatcher(bslma::Allocator* allocator);
+
+    /// Create a `mqbmock::Dispatcher` that returns the specified `executor`.
+    /// Use the specified `allocator` for any memory allocation.
+    Dispatcher(const bmqex::Executor& executor, bslma::Allocator* allocator);
 
     /// Destructor of this object.
     ~Dispatcher() BSLS_KEYWORD_OVERRIDE;
@@ -223,7 +230,8 @@ class Dispatcher BSLS_KEYWORD_FINAL : public mqbi::Dispatcher {
     int numProcessors(mqbi::DispatcherClientType::Enum type) const
         BSLS_KEYWORD_OVERRIDE;
 
-    /// Not implemented.
+    /// Return the executor provided at construction.  The behavior is
+    /// undefined unless an executor was provided.
     bmqex::Executor
     executor(const mqbi::DispatcherClient* client) const BSLS_KEYWORD_OVERRIDE;
 
