@@ -39,12 +39,22 @@ struct DispatcherExecutor {
 
     void post(const mqbi::Dispatcher::VoidFunction& functor) const
     {
+        d_dispatcher_p->_enqueue(functor);
+    }
+
+    void dispatch(const mqbi::Dispatcher::VoidFunction& functor) const
+    {
         d_dispatcher_p->_execute(functor);
     }
 
     bool operator==(const DispatcherExecutor& other) const
     {
         return d_dispatcher_p == other.d_dispatcher_p;
+    }
+
+    bool operator!=(const DispatcherExecutor& other) const
+    {
+        return !(*this == other);
     }
 };
 
@@ -135,6 +145,12 @@ void Dispatcher::executeOnAllQueues(
     if (doneCallback) {
         _execute(doneCallback);
     }
+}
+
+void Dispatcher::_enqueue(const mqbi::Dispatcher::VoidFunction& functor)
+{
+    bslmt::LockGuard<bslmt::Mutex> lock(&d_mutex);
+    d_queue.push(functor);
 }
 
 void Dispatcher::_execute(const mqbi::Dispatcher::VoidFunction& functor)

@@ -223,8 +223,8 @@ class Dispatcher BSLS_KEYWORD_FINAL : public mqbi::Dispatcher {
     int numProcessors(mqbi::DispatcherClientType::Enum type) const
         BSLS_KEYWORD_OVERRIDE;
 
-    /// Return an executor that submits work through this mock's `_execute`.
-    /// Work runs inline unless `setEnqueueOnly(true)` has been called.
+    /// Return an executor for this mock's shared queue.  `post` enqueues work
+    /// for `processQueue`; `dispatch` uses `_execute`.
     /// The returned executor must not outlive this dispatcher.
     bmqex::Executor
     executor(const mqbi::DispatcherClient* client) const BSLS_KEYWORD_OVERRIDE;
@@ -248,6 +248,9 @@ class Dispatcher BSLS_KEYWORD_FINAL : public mqbi::Dispatcher {
                           mqbi::Dispatcher::DispatcherEventSp event);
 
     bslmt::Mutex& mutex();
+
+    /// Enqueue the specified `functor` for execution by `processQueue`.
+    void _enqueue(const mqbi::Dispatcher::VoidFunction& functor);
 
     void _execute(const mqbi::Dispatcher::VoidFunction& functor);
 

@@ -45,6 +45,8 @@ static void test1_executor()
     };
 
     executor.post(callback);
+    BMQTST_ASSERT_EQ(callCount, 0);
+    dispatcher.processQueue();
     BMQTST_ASSERT_EQ(callCount, 1);
     executor.dispatch(callback);
     BMQTST_ASSERT_EQ(callCount, 2);
@@ -59,6 +61,8 @@ static void test1_executor()
     dispatcher.setEnqueueOnly(false);
     dispatcher.unregisterClient(&client);
     executor.post(callback);
+    BMQTST_ASSERT_EQ(callCount, 4);
+    dispatcher.processQueue();
     BMQTST_ASSERT_EQ(callCount, 5);
 }
 
