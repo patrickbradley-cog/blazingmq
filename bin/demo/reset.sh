@@ -6,7 +6,7 @@
 # Needs: gh (authenticated for COG-GTM/blazingmq) or GITHUB_TOKEN + curl.
 set -euo pipefail
 
-REPO="${REPO:-COG-GTM/blazingmq}"
+REPO="${REPO:-patrickbradley-cog/blazingmq}"
 BASE="demo/bloomberg-sre"
 API="https://api.github.com/repos/${REPO}"
 
